@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+umask 077
+root=$REXPACK_EVENTS_ROOT
+rex_bin=${REX_BIN:-}
+if [ -z "$rex_bin" ]; then rex_bin=$(command -v rex || true); fi
+if [ -z "$rex_bin" ]; then
+    for candidate in \
+        "$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex" \
+        '/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex'; do
+        if [ -x "$candidate" ]; then rex_bin=$candidate; break; fi
+    done
+fi
+[ -n "$rex_bin" ] || exit 1
+export REXPACK_EVENTS_PID=$$
+set -- "$rex_bin" --autostart=false --timeout 2s
+if [ -n "$REXPACK_EVENTS_SERVER" ]; then set -- "$@" --server "$REXPACK_EVENTS_SERVER"; fi
+attempt=0
+while [ "$attempt" -lt "$REXPACK_EVENTS_ATTEMPTS" ]; do
+    if "$@" do "$root/events_probe.lua" >/dev/null 2>&1; then
+        exec "$@" do "$root/events_runner.lua" --all >"$REXPACK_EVENTS_LOG" 2>&1
+    fi
+    attempt=$((attempt + 1))
+    if [ "$attempt" -lt "$REXPACK_EVENTS_ATTEMPTS" ]; then sleep 1; fi
+done
+exit 1

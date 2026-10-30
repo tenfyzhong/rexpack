@@ -1,4 +1,6 @@
 local M = {}
+local source_path = debug.getinfo(1, 'S').source:gsub('^@', '')
+local module_dir = source_path:match('^(.*)/') or '.'
 local Instance = {}
 Instance.__index = Instance
 
@@ -13,10 +15,11 @@ function M.inspect(options)
     options = options or {}
     local base = options.base or ((os.getenv('XDG_CONFIG_HOME') or
         (os.getenv('HOME') .. '/.config')) .. '/rex')
+    options.base = base
     options.root = path(options.root or ((os.getenv('XDG_DATA_HOME') or
         os.getenv('HOME') .. '/.local/share') .. '/rex/rexpack'), base)
     options.lockfile = path(options.lockfile or 'rexpack-lock.json', base)
-    local self = setmetatable({plugins = {}, order = {}, options = options}, Instance)
+    local self = setmetatable({plugins = {}, order = {}, options = options, sources = {}}, Instance)
     local specs = options.spec or 'plugins'
     if type(specs) == 'string' then
         local result, err = rex.exec({'find', path(specs, base), '-type', 'f', '-name', '*.lua'})
@@ -25,7 +28,12 @@ function M.inspect(options)
         for file in result.stdout:gmatch('[^\n]+') do files[#files + 1] = file end
         table.sort(files)
         specs = {}
-        for _, file in ipairs(files) do specs[#specs + 1] = assert(loadfile(file))() end
+        for _, file in ipairs(files) do
+            local f = assert(io.open(file))
+            local code = f:read('*a'); f:close()
+            self.sources[#self.sources + 1] = {path = file, code = code}
+            specs[#specs + 1] = assert(loadstring(code, '@' .. file))()
+        end
     end
     for _, spec in ipairs(specs) do
         if spec.enabled ~= false then
@@ -79,10 +87,8 @@ function M.inspect(options)
     return self
 end
 
-function M.setup(options)
-    local started = os.clock()
-    assert(not M.instance, 'rexpack is already configured')
-    local self = M.inspect(options)
+function Instance:attach_loader()
+    if self.loader then return end
     local loaders = package.loaders or package.searchers
     local function loader(module)
         for _, p in ipairs(self.order) do
@@ -100,6 +106,22 @@ function M.setup(options)
     end
     self.loader = loader
     table.insert(loaders, 1, loader)
+end
+
+function Instance:register_events()
+    for _, p in ipairs(self.order) do
+        if p.spec.events then
+            assert(type(p.spec.events) == 'function', 'events must be a function: ' .. p.name)
+            p.spec.events(p)
+        end
+    end
+end
+
+function M.setup(options)
+    local started = os.clock()
+    assert(not M.instance, 'rexpack is already configured')
+    local self = M.inspect(options)
+    self:attach_loader()
     for _, p in ipairs(self.order) do
         local before = os.clock()
         if p.spec.init then p.spec.init(p) end
@@ -113,6 +135,7 @@ function M.setup(options)
     if rex and rex.action then
         rex.action {name = 'rexpack_profile', title = 'Rexpack: Profile',
             run = function() return self:profile() end}
+        dofile(module_dir .. '/events.lua').start(self, module_dir)
     end
     return self
 end

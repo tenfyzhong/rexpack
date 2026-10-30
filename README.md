@@ -86,11 +86,269 @@ plugin also has its declared main module.
 Unknown dependencies, dependency cycles, duplicate names and overlapping module
 names are rejected. `enabled = false` excludes a plugin. `branch`, `tag` and
 `commit` are mutually exclusive. Without one, updates follow origin's default
-branch. No semver resolver, nested spec merging, event daemon or keys DSL is added.
+branch. No semver resolver, nested spec merging, service manager or keys DSL is added.
 
 Rex only permits action/mode declarations at configuration load time. Put them
-in `init`, not in a deferred module/config callback. Event scripts remain native
-`rex do` scripts. See the [Rex Lua API](https://www.superlogical.com/rex/docs/reference/lua).
+in `init`, not in a deferred module/config callback. Use the `events` callback
+below for native event subscriptions. See the [Rex Lua API](https://www.superlogical.com/rex/docs/reference/lua).
+
+## Automatic event subscriptions
+
+Put native `rex.on` registrations in a plugin's `events` callback. Rex does not
+allow these registrations in the configuration VM, so `init` remains for actions
+and bindings. For example, a local plugin can log newly created sessions:
+
+```lua
+-- plugins/session-log.lua
+return {
+    name = 'session-log',
+    dir = '~/dev/session-log',
+    main = 'session_log',
+    events = function()
+        rex.on('session_created', function(ctx, event)
+            require('session_log').record(ctx, event)
+        end)
+    end,
+}
+```
+
+```lua
+-- ~/dev/session-log/lua/session_log.lua
+local M = {}
+function M.record(ctx, event)
+    print(rex.json.encode(event))
+end
+return M
+```
+
+Reload Rex once after adding the spec. `setup()` starts one shared background
+`rex do --all` process for all event plugins, without LaunchAgent or systemd.
+The module above loads on the first event. The launcher waits for the server to
+publish this configuration's random generation token, then replaces itself with
+the runner. The runner stays alive to receive **future** events; completing all
+registrations or one batch of callbacks does not stop it. There is no permanent
+shell process or separate supervisor.
+
+Only directory-based specs support automatic events. Their source is captured
+at configuration load and evaluated again in the runner, with a fresh lazy
+loader; `init` is not called again. Keep spec top levels declarative and put
+shared options in `config`. Config and runner VMs have separate module caches,
+globals and plugin state, so `config` runs once per VM when its module loads.
+The runner does not eagerly load `lazy = false` plugins: require the modules
+needed by event registrations explicitly. Do not depend on variables initialized
+by `init`. Native event names, context and payloads pass through unchanged.
+
+Optional shared configuration:
+
+```lua
+return {
+    spec = 'plugins',
+    events = {
+        enabled = true,       -- false disables all event plugins
+        startup_attempts = 10, -- 1..60; each probe has a 2-second request timeout
+        -- rex_bin = '/absolute/path/to/rex',
+        -- server = 'unix:///absolute/path/to/rex.sock',
+        -- log = '/absolute/path/to/events.log',
+    },
+}
+```
+
+The executable resolves through `events.rex_bin`, `REX_BIN`, PATH, then known
+macOS paths. The target resolves through `events.server`, `REX_SERVER`, then
+Rex's default server. Set it explicitly for custom endpoints. Probes never
+start a missing server and wait one second between attempts. Config checks and
+failed config evaluations can launch short-lived probes, but cannot publish a
+matching token or register listeners; probes exit after their bounded retries.
+
+```sh
+rex do rexpack_events_control op=status
+```
+
+Status reports generation, state, owner, runner PID, last heartbeat and any
+registration error. Runner stdout/stderr go to `root/events.log` by default,
+truncated on each successful launch; custom log parent directories must exist.
+Plugin logging can grow the file during a run, so keep it bounded yourself.
+
+On reload, each event callback checks its generation before invoking plugin
+code. A one-second heartbeat stops idle stale runners after reload, disabling or
+removing event specs, or losing the server connection. A callback already in
+progress may finish; handover does not guarantee exactly-once delivery or replay
+missed events. Keep callbacks short. These checks add one server action call per
+dispatch and one per second per runner. A runner crash or registration failure
+is recovered by `rex config reload` or restarting Rex, not by a persistent
+supervisor. Plugin exceptions follow native Rex behavior.
+
+## Developing a plugin
+
+A plugin is an ordinary Lua module in a Git repository or local directory. It
+needs no rexpack SDK, manifest or registration API. The **plugin implementation**
+lives in its repository; the **user's plugin spec** lives in the user's Rex
+configuration and selects its source, options and native actions.
+
+### 1. Create a module
+
+For a repository named `rex-greeting`, use this layout:
+
+```text
+rex-greeting/
+└── lua/
+    └── greeting/
+        └── init.lua
+```
+
+Create `~/dev/rex-greeting/lua/greeting/init.lua`:
+
+```lua
+local M = {}
+local prefix = 'Hello'
+
+function M.setup(options)
+    options = options or {}
+    prefix = options.prefix or 'Hello'
+end
+
+function M.greet(ctx, args)
+    args = args or {}
+    return {message = prefix .. ', ' .. (args.name or 'world') .. '!'}
+end
+
+function M.list_sessions(ctx, args)
+    -- Rex provides this global directly; rexpack does not wrap or inject it.
+    local result, err = rex.call('session.list')
+    if err ~= nil then error(err, 0) end
+    return result
+end
+
+return M
+```
+
+`setup` is an ordinary function in this example, not a required Rex API or a
+function rexpack calls automatically. The user's `config` callback below calls
+it explicitly. Returning a module table makes the plugin usable with normal
+Lua `require`, even without rexpack.
+
+The equivalent entry paths `lua/greeting.lua`, `greeting.lua`, and
+`greeting/init.lua` also work. Choose one layout. A repository-root `init.lua`
+alone does **not** satisfy `main = 'greeting'`.
+
+### 2. Connect the local plugin
+
+Create `~/.config/rex/plugins/greeting.lua` (with rexpack configured as above):
+
+```lua
+return {
+    name = 'rex-greeting',
+    dir = '~/dev/rex-greeting',
+    main = 'greeting',
+    init = function()
+        rex.action {
+            name = 'greeting_hello',
+            title = 'Greeting: Say Hello',
+            args = {name = 'string?'},
+            run = function(ctx, args)
+                return require('greeting').greet(ctx, args)
+            end,
+        }
+        rex.bind('ctrl+shift+g', 'greeting_hello', {name = 'Rex'})
+        rex.action {
+            name = 'greeting_sessions',
+            title = 'Greeting: List Rex Sessions',
+            run = function(ctx, args)
+                return require('greeting').list_sessions(ctx, args)
+            end,
+        }
+    end,
+    config = function()
+        require('greeting').setup({prefix = 'Hi'})
+    end,
+}
+```
+
+The three names have different roles:
+
+| Value | Meaning |
+| --- | --- |
+| `rex-greeting` | Plugin identity for management commands and dependency references |
+| `greeting` | Lua entry module, loaded by `require('greeting')` |
+| `greeting_hello` | Native Rex action, invoked with `rex do greeting_hello` |
+
+`main` maps the plugin to its entry module and module-name prefix. Without it,
+the module name defaults to the plugin name: `rex-greeting` in this example.
+It also determines what `rexpack.load('rex-greeting')` requires. Keep submodules
+under the same namespace, for example `lua/greeting/format.lua` loaded using
+`require('greeting.format')`. A first require of that submodule still loads the
+main `greeting` module and runs `config` first. Unrelated top-level namespaces
+are not automatically associated with this plugin.
+
+### 3. Run and iterate
+
+The local example needs no download or build step. With the Rex server running:
+
+```sh
+rex config check
+rex config reload
+rexpack profile --json
+rex do greeting_hello name=Rex
+rex do greeting_sessions
+rexpack profile --json
+```
+
+The action returns `{"message":"Hi, Rex!"}`. Before its first invocation, the
+profile should show `rex-greeting` as `unloaded`; afterward it should be `loaded`
+with reason `require:greeting`. The command palette and shortcut invoke the same
+action, but this example returns data for the CLI; it does not display a popup.
+
+`greeting_sessions` calls Rex's native `session.list` API **inside the plugin**
+and returns its response, which the CLI prints as JSON. It is a read-only
+example: it does not create or modify sessions. The plugin accesses the global
+`rex` directly; no rexpack API or `require('rex')` is needed. The call runs only
+when the action invokes `list_sessions`, not when the module is first read.
+Keep client/session operations in runtime callbacks and check the API's error
+return, as shown here. Declaring actions still belongs in the spec's `init`.
+
+Edit the module and run `rex config reload` before trying it again. Lua caches
+loaded modules, and rexpack does not implement live module replacement. Use a
+fresh configuration load after an initialization failure as well.
+
+### 4. Publish or use dev mode
+
+After publishing your repository, replace the local spec's `name` and `dir`
+fields with `'your-account/rex-greeting'`. Keep `main`, `init` and `config`
+unchanged. The account name is a placeholder for your real repository.
+
+```lua
+-- Source fields in the same spec; retain the callbacks from step 2.
+'your-account/rex-greeting',
+main = 'greeting',
+```
+
+Run `rexpack install rex-greeting`, then `rex config reload`. To develop the
+published plugin from `~/dev/rex-greeting`, set `dev.path = '~/dev'` in the
+shared rexpack configuration and add `dev = true` to this remote spec. Omit
+`dir` when using dev mode: an explicit `dir` always wins. Local/dev plugins are
+not updated or restored by rexpack.
+
+### Lifecycle rules for authors
+
+- Keep module top levels lightweight and return exports. Do not register
+  `rex.action`, modes or named key bindings from a lazily loaded implementation.
+  Register those in the spec's `init`; call the plugin from their callbacks.
+- Put a plugin `require` inside the action's `run`, as above. Requiring it at
+  the top level of the spec or inside `init` defeats deferred loading (and a
+  top-level require can happen before the manager installs its loader).
+- Loading runs dependencies, `require(main)`, then `config`, before returning
+  control to the original action. The current implementation always requires
+  `main`; a `config` callback alone does not replace the entry module.
+- `config` runs once when loaded, and may run either during startup (`lazy =
+  false`) or later in a callback. Keep context-sensitive Rex operations inside
+  action functions; use `config` for module options. Pass `ctx`/`args` through
+  rather than saving a particular action's context globally.
+- Declare another managed plugin in `dependencies = {'plugin-name'}` when its
+  initialization must finish first. Use globally unique module namespaces.
+- Pure Lua plugins need no `build`. If you ship generated code or native helper
+  executables, add an explicit hook such as `build = 'make install'`; see
+  [Build hooks](#build-hooks) for Lua callbacks, timeouts and retry behavior.
+  Ignore generated artifacts in Git so future updates pass dirty-tree checks.
 
 ## Build hooks
 
@@ -170,7 +428,8 @@ module/config, inclusive load and self load durations. Times are seconds from
 `os.clock`; the tested Rex implementation includes elapsed waits. Standard Lua
 implementations may report CPU time instead. Memory is reported as unavailable,
 not zero. Profiles contain bounded per-plugin records and do not poll in the
-background. Disk checkout state and live module state are separate.
+background. Profiles describe the configuration VM, not the separate event
+runner. Disk checkout state and live module state are separate.
 
 ```sh
 make test                        # development-only LuaJIT/Lua and vendored LuaUnit

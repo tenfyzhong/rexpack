@@ -6,9 +6,11 @@ REX ?= rex
 test:
 	$(LUA) tests/runtime.lua
 	$(LUA) tests/build.lua
+	$(LUA) tests/events.lua
 
 integration:
 	REX_BIN="$(REX)" "$(REX)" --autostart=false do tests/integration.lua
+	REXPACK_ROOT="$(CURDIR)" REX_BIN="$(REX)" "$(REX)" --autostart=false do tests/events_integration.lua
 
 acceptance:
 	REXPACK_ROOT="$(CURDIR)" "$(REX)" config check tests/rex_config.lua --json
