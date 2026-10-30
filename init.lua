@@ -157,7 +157,16 @@ function Instance:load(name, reason)
     end)
     p.elapsed = os.clock() - started
     p.self_elapsed = p.elapsed - dependency_elapsed
-    if not ok then p.state, p.error = 'failed', tostring(result); error(result, 0) end
+    if not ok then
+        p.state, p.error = 'failed', tostring(result)
+        -- require() must reach the failed-state guard, not a partially configured cache.
+        for module in pairs(package.loaded) do
+            if module == p.main or module:sub(1, #p.main + 1) == p.main .. '.' then
+                package.loaded[module] = nil
+            end
+        end
+        error(result, 0)
+    end
     p.state, p.module = 'loaded', result
     return result
 end

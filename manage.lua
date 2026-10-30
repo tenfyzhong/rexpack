@@ -84,7 +84,7 @@ function M.run(instance, operation, name)
         local function select(p)
             if seen[p.name] then return end
             seen[p.name] = true
-            if operation ~= 'build' then
+            if operation ~= 'build' or not name then
                 for _, dep in ipairs(p.spec.dependencies or {}) do select(instance.plugins[dep]) end
             end
             selected[#selected + 1] = p
@@ -95,6 +95,9 @@ function M.run(instance, operation, name)
         local failed = {}
         for _, p in ipairs(selected) do
             local started = os.clock()
+            local previous = states[p.name] or {}
+            local pending = previous.pending_build or previous.status == 'build_failed'
+            p.build_status, p.build_result, p.build_elapsed = nil, nil, nil
             local success, failure = pcall(function()
                 for _, dependency in ipairs(p.spec.dependencies or {}) do
                     assert(not failed[dependency], 'dependency failed: ' .. dependency)
@@ -123,6 +126,7 @@ function M.run(instance, operation, name)
                 verify(p)
                 p.old_commit = installed and git(p, 'rev-parse', 'HEAD') or nil
                 if operation ~= 'build' and (operation ~= 'install' or not installed) then
+                    if installed then git(p, 'fetch', '--tags', 'origin') end
                     local target
                     if operation == 'restore' or (operation == 'install' and lock) then
                         target = lock.commit
@@ -131,23 +135,24 @@ function M.run(instance, operation, name)
                     else
                         local branch = p.spec.branch
                         if not branch then
+                            git(p, 'remote', 'set-head', 'origin', '--auto')
                             branch = git(p, 'symbolic-ref', 'refs/remotes/origin/HEAD'):gsub('^refs/remotes/origin/', '')
                         end
                         target = 'refs/remotes/origin/' .. branch
                     end
-                    if installed then git(p, 'fetch', '--tags', 'origin') end
                     local resolved = git(p, 'rev-parse', '--verify', '--end-of-options', target .. '^{commit}')
                     git(p, 'checkout', '--detach', resolved)
                 end
                 p.commit = git(p, 'rev-parse', 'HEAD')
-                local pending = states[p.name] and states[p.name].status == 'build_failed'
                 if operation == 'build' or not installed or p.old_commit ~= p.commit or pending then
                     M.build(p, operation, options)
                 end
                 locks[p.name] = {url = p.url, commit = p.commit}
                 write_json(options.lockfile, locks)
             end)
-            local entry = {name = p.name, ok = success, elapsed = os.clock() - started,
+            if p.build_status == 'built' then pending = false
+            elseif p.build_status == 'build_failed' then pending = true end
+            local entry = {pending_build = pending, name = p.name, ok = success, elapsed = os.clock() - started,
                 status = success and 'ok' or (p.build_status == 'build_failed' and 'build_failed' or 'failed'),
                 error = not success and tostring(failure) or nil,
                 build = p.build_result, build_elapsed = p.build_elapsed}

@@ -93,5 +93,66 @@ function TestGit:testDependencyFailure()
     local result = self.manager.run(self.runtime, 'install', 'dependent')
     lu.assertFalse(result.plugins[2].ok)
 end
+function TestGit:testBulkBuildOrdersDependencies()
+    local built, calls = false, {}
+    local i = dofile('init.lua').inspect({base = self.tmp, root = self.tmp .. '/builds', spec = {
+        {name = 'dependent', dir = self.tmp, dependencies = {'dependency'}, build = function()
+            assert(built, 'dependency artifact missing'); calls[#calls + 1] = 'dependent'
+        end},
+        {name = 'dependency', dir = self.tmp, build = function()
+            built = true; calls[#calls + 1] = 'dependency'
+        end},
+    }})
+    lu.assertTrue(self.manager.run(i, 'build').ok)
+    lu.assertEquals(calls, {'dependency', 'dependent'})
+    calls = {}
+    lu.assertTrue(self.manager.run(i, 'build', 'dependent').ok)
+    lu.assertEquals(calls, {'dependent'})
+end
+function TestGit:testBulkBuildSkipsFailedDependents()
+    local calls = {}
+    local i = dofile('init.lua').inspect({base = self.tmp, root = self.tmp .. '/builds', spec = {
+        {name = 'dependent', dir = self.tmp, dependencies = {'dependency'}, build = function()
+            calls[#calls + 1] = 'dependent'
+        end},
+        {name = 'dependency', dir = self.tmp, build = function() error('dependency failed') end},
+        {name = 'independent', dir = self.tmp, build = function() calls[#calls + 1] = 'independent' end},
+    }})
+    lu.assertFalse(self.manager.run(i, 'build').ok)
+    lu.assertEquals(calls, {'independent'})
+end
+function TestGit:testUpdateFollowsChangedRemoteDefaultBranch()
+    self.runtime.plugins.sample.spec.build = false
+    lu.assertTrue(self.manager.run(self.runtime, 'install').ok)
+    exec({'git', 'checkout', '-b', 'next'}, self.repo)
+    write(self.repo .. '/sample.lua', 'return {value = 2}')
+    exec({'git', 'commit', '-s', '-am', 'New default branch'}, self.repo)
+    local latest = exec({'git', 'rev-parse', 'HEAD'}, self.repo)
+    lu.assertTrue(self.manager.run(self.runtime, 'update').ok)
+    lu.assertEquals(exec({'git', 'rev-parse', 'HEAD'}, self.runtime.plugins.sample.dir), latest)
+end
+function TestGit:testPendingBuildSurvivesUnrelatedFailureAcrossInstances()
+    local options = self.runtime.options
+    options.spec[1].build = false
+    lu.assertTrue(self.manager.run(self.runtime, 'install').ok)
+    write(self.repo .. '/sample.lua', 'return {value = 2}')
+    exec({'git', 'commit', '-s', '-am', 'Needs rebuild'}, self.repo)
+    local latest = exec({'git', 'rev-parse', 'HEAD'}, self.repo)
+    local function fresh() return dofile('init.lua').inspect(options) end
+    options.spec[1].build = 'false'
+    lu.assertFalse(self.manager.run(fresh(), 'update').ok)
+    local directory = self.runtime.plugins.sample.dir
+    write(directory .. '/sample.lua', 'dirty')
+    lu.assertFalse(self.manager.run(fresh(), 'update').ok)
+    exec({'git', 'checkout', '--', 'sample.lua'}, directory)
+    local calls = 0
+    options.spec[1].build = function() calls = calls + 1 end
+    lu.assertEquals(self.manager.list(fresh())[1].lock.commit, self.first)
+    lu.assertTrue(self.manager.run(fresh(), 'update').ok)
+    lu.assertEquals(calls, 1)
+    lu.assertEquals(self.manager.list(fresh())[1].lock.commit, latest)
+    lu.assertTrue(self.manager.run(fresh(), 'update').ok)
+    lu.assertEquals(calls, 1)
+end
 local failures = lu.LuaUnit.run()
 if failures > 0 then rex.stop(1) end

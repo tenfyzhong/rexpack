@@ -79,7 +79,9 @@ its `lua/` directory. Plugin names contain letters, digits, underscores or hyphe
 `lazy` defaults to false: plugins and their dependencies load at startup after
 all `init(plugin)` callbacks register their native declarations. Set `lazy = true`
 to defer the implementation and `config(plugin)` until the first `require`.
-`config` runs once. Failed initialization is not automatically retried.
+`config` runs once. Failed initialization clears cached modules in the plugin
+namespace, so later requires report the same failure instead of using a partially
+configured module. It is not automatically retried.
 `require('rexpack').load(name)` loads explicitly. A root entry script can be
 executed with `dofile(plugin.dir .. '/init.lua')` inside `config`, provided the
 plugin also has its declared main module.
@@ -383,7 +385,11 @@ output, exit status and build duration are retained in operation state.
 
 A failed hook leaves its checkout intact, records `build_failed`, returns a
 nonzero CLI exit, and does not advance its lock entry. Use `rexpack build NAME`
-to retry. External installation side effects cannot be rolled back. Build
+to retry. Pending build failures survive unrelated operation errors and clear
+only after a successful build; a later update retries even an unchanged checkout.
+A bulk `rexpack build` runs dependencies first and skips dependents when a
+dependency fails. A named `rexpack build NAME` rebuilds only that plugin.
+External installation side effects cannot be rolled back. Build
 outputs should be gitignored; dirty repositories are protected even during
 explicit rebuild. Local/dev plugins build only on an explicit `build` command.
 Startup, configuration checks and lazy loading never run hooks or Git.
@@ -420,6 +426,10 @@ All commands accept `--json` and `--config PATH`. Text output is a concise
 summary; JSON includes detailed paths, locks, build output and timing.
 `profile` always queries the running Rex configuration, not the config selected
 on disk. It does not load plugins to obtain measurements.
+
+Without a branch, tag, or commit selector, updates refresh the remote default
+branch before resolving the checkout target, including after a default-branch
+rename. Explicit selectors and locked restores keep their selected targets.
 
 Default storage is `$XDG_DATA_HOME/rex/rexpack` or `~/.local/share/rex/rexpack`,
 overridable with `root`. The configuration base directory holds `rexpack-lock.json`

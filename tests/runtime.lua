@@ -113,4 +113,22 @@ function TestRuntime:testFailureDoesNotRetry()
     lu.assertErrorMsgContains('broken module', i.load, i, 'broken')
     lu.assertEquals(calls, 1)
 end
+function TestRuntime:testConfigurationFailureCannotBypassFailedState()
+    local m = dofile('init.lua')
+    local calls, configured = 0, 0
+    package.preload.config_failure = function()
+        calls = calls + 1
+        require('config_failure.child')
+        return {}
+    end
+    package.preload['config_failure.child'] = function() return {} end
+    local i = m.setup({spec = {{name = 'config_failure', dir = '.', lazy = true,
+        config = function() configured = configured + 1; error('configuration rejected') end}}})
+    lu.assertErrorMsgContains('configuration rejected', require, 'config_failure')
+    lu.assertErrorMsgContains('configuration rejected', require, 'config_failure')
+    lu.assertErrorMsgContains('configuration rejected', require, 'config_failure.child')
+    lu.assertEquals(i.plugins.config_failure.state, 'failed')
+    lu.assertEquals(calls, 1)
+    lu.assertEquals(configured, 1)
+end
 os.exit(lu.LuaUnit.run())
