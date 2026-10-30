@@ -1,7 +1,13 @@
 LUA ?= luajit
 REX ?= rex
+LUAROCKS ?= luarocks
+LUAROCKS_FLAGS ?=
+LUAUNIT_VERSION := 3.5-1
 
-.PHONY: test integration acceptance benchmark
+.PHONY: test-deps test integration acceptance benchmark
+
+test-deps:
+	$(LUAROCKS) --lua-version=5.1 $(LUAROCKS_FLAGS) --tree .test-deps install luaunit $(LUAUNIT_VERSION)
 
 test:
 	$(LUA) tests/runtime.lua

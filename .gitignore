@@ -43,3 +43,6 @@ luac.out
 # Keep the CLI entry point even when a global ignore excludes bin.
 !bin/
 !bin/rexpack
+
+# Local test dependencies installed by LuaRocks
+.test-deps/

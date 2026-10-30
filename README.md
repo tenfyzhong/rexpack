@@ -455,14 +455,26 @@ background. Profiles describe the configuration VM, not the separate event
 runner. Disk checkout state and live module state are separate.
 
 ```sh
-make test                        # development-only LuaJIT/Lua and vendored LuaUnit
+make test-deps                   # install LuaUnit 3.5-1 through LuaRocks
+make test                        # development-only LuaJIT (or LUA=lua5.1)
 make integration REX=/path/to/rex # running Rex, isolated temporary repositories
 make acceptance REX=/path/to/rex  # config check and native action fixture
 make benchmark REX=/path/to/rex   # synthetic 100-module startup comparison
 ```
 
-The vendored test-only LuaUnit 3.4 is MIT-licensed; its license is included in
-`tests/vendor/luaunit.lua`. Integration fixtures isolate Git hooks and create
+LuaUnit is a test-only dependency installed through LuaRocks into the ignored
+`.test-deps` directory; no framework source is vendored. Install LuaRocks and a
+Lua 5.1-compatible interpreter before running `make test-deps`. If LuaRocks needs
+an explicit interpreter prefix (for example, Homebrew LuaJIT on macOS), use
+`make test-deps LUAROCKS_FLAGS="--lua-dir=$(brew --prefix luajit)"`.
+The dependency tree uses Lua 5.1 paths for both LuaJIT and Rex's embedded Lua.
+
+The GitHub Actions `Tests` workflow runs `make test-deps` and `make test` on
+Lua 5.1 and LuaJIT for pushes, pull requests, and manual dispatch. It does not
+run the live Rex integration or acceptance targets; run those locally against
+a running Rex service using the commands above.
+
+Integration fixtures isolate Git hooks and create
 signed-off commits only in temporary repositories. Acceptance does not modify
 or reload your own Rex configuration. Keyboard registration is validated through
 `config check`; the action is invoked through Rex's script action runner.

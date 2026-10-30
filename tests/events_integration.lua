@@ -1,4 +1,4 @@
-package.path = './tests/vendor/?.lua;' .. package.path
+package.path = './.test-deps/share/lua/5.1/?.lua;' .. package.path
 local date = os.date
 os.date = function(format, time) return date(format or '%c', time or os.time()) end
 local lu = require('luaunit')

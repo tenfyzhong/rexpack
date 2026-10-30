@@ -1,4 +1,4 @@
-package.path = './tests/vendor/?.lua;' .. package.path
+package.path = './.test-deps/share/lua/5.1/?.lua;' .. package.path
 local lu = require('luaunit')
 TestEvents = {}
 function TestEvents:testGenerationAndSingleOwner()

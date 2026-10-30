@@ -1,4 +1,4 @@
-package.path = './tests/vendor/?.lua;./?.lua;' .. package.path
+package.path = './.test-deps/share/lua/5.1/?.lua;./?.lua;' .. package.path
 local lu = require('luaunit')
 TestRuntime = {}
 function TestRuntime:testLazy()
