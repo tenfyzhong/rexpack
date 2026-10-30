@@ -16,8 +16,21 @@ Add to Rex's `init.lua`:
 
 ```lua
 require("rexpack").setup({
-    spec = "plugins",
-    dev = { path = "dev" },
+    -- Defaults respect XDG_CONFIG_HOME and XDG_DATA_HOME.
+    base = (os.getenv('XDG_CONFIG_HOME') or (os.getenv('HOME') .. '/.config')) .. '/rex',
+    root = (os.getenv('XDG_DATA_HOME') or (os.getenv('HOME') .. '/.local/share')) .. '/rex/rexpack',
+    spec = 'plugins',
+    lockfile = 'rexpack-lock.json',
+    dev = {path = 'dev'}, -- prefer <base>/dev/<plugin-name> when present
+    build_timeout = 300, -- seconds, for external build commands
+    events = {
+        enabled = true,
+        startup_attempts = 10, -- integer from 1 to 60
+        -- Optional overrides; omit to use automatic discovery/defaults.
+        -- rex_bin = '/absolute/path/to/rex',
+        -- server = 'unix:///absolute/path/to/rex.sock',
+        -- log = '/absolute/path/to/events.log',
+    },
 })
 ```
 
@@ -51,8 +64,19 @@ selected config file. Use absolute paths when sharing options across locations.
 -- plugins/example.lua (replace the illustrative repository/module names)
 return {
     'someone/rex-example',
+    name = 'rex-example',
     main = 'example',
+    enabled = true,
+    dev = true, -- use the local dev directory if it exists
     lazy = true,
+    dependencies = {}, -- names of separately declared plugins
+    -- Optional source overrides (dir takes precedence over Git/dev):
+    -- url = 'git@host:team/rex-example.git',
+    -- dir = '~/src/rex-example',
+    -- Optional version selector: choose at most one.
+    -- branch = 'main',
+    -- tag = 'v1.0.0',
+    -- commit = 'full-commit-sha',
     build = 'make install',
     init = function()
         rex.action {
@@ -67,8 +91,19 @@ return {
     config = function()
         require('example').setup({})
     end,
+    events = function()
+        rex.on('session_created', function(ctx, event)
+            require('example').record(ctx, event)
+        end)
+    end,
 }
 ```
+
+This specification shows all supported plugin fields; optional alternatives are
+commented out. Replace the illustrative repository, build command and module
+methods (`setup`, `open`, `record`) with those provided by your plugin. The global
+`events` table passed to `setup()` controls the runner; each plugin's `events(plugin)` registers
+its subscriptions.
 
 Use `url = 'git@host:team/repository.git', name = 'repository'` for arbitrary Git
 sources, or `dir = '~/src/repository', name = 'repository'` for local plugins.
@@ -142,20 +177,9 @@ The runner does not eagerly load `lazy = false` plugins: require the modules
 needed by event registrations explicitly. Do not depend on variables initialized
 by `init`. Native event names, context and payloads pass through unchanged.
 
-Optional event settings in the same `setup()` call:
-
-```lua
-require("rexpack").setup({
-    spec = 'plugins',
-    events = {
-        enabled = true,       -- false disables all event plugins
-        startup_attempts = 10, -- 1..60; each probe has a 2-second request timeout
-        -- rex_bin = '/absolute/path/to/rex',
-        -- server = 'unix:///absolute/path/to/rex.sock',
-        -- log = '/absolute/path/to/events.log',
-    },
-})
-```
+The complete `setup()` example in [Install](#install) includes every event
+setting. Set `events.enabled = false` to disable all event plugins.
+`startup_attempts` accepts 1..60; each probe has a 2-second request timeout.
 
 The executable resolves through `events.rex_bin`, `REX_BIN`, PATH, then known
 macOS paths. The target resolves through `events.server`, `REX_SERVER`, then
@@ -216,6 +240,10 @@ function M.greet(ctx, args)
     return {message = prefix .. ', ' .. (args.name or 'world') .. '!'}
 end
 
+function M.record(ctx, event)
+    print(prefix .. ': ' .. rex.json.encode(event))
+end
+
 function M.list_sessions(ctx, args)
     -- Rex provides this global directly; rexpack does not wrap or inject it.
     local result, err = rex.call('session.list')
@@ -266,8 +294,18 @@ return {
     config = function()
         require('greeting').setup({prefix = 'Hi'})
     end,
+    events = function()
+        rex.on('session_created', function(ctx, event)
+            require('greeting').record(ctx, event)
+        end)
+    end,
 }
 ```
+
+The `events` callback logs future `session_created` events to the event runner's
+log. Its first event loads `greeting` and runs `config` in that separate VM, so
+`record` uses the same `Hi` prefix. This does not change the configuration VM's
+profile; actions and event subscriptions have independent module state.
 
 The three names have different roles:
 
@@ -318,14 +356,14 @@ fresh configuration load after an initialization failure as well.
 ### 4. Publish or use dev mode
 
 After publishing your repository, replace the local spec's `name` and `dir`
-fields with `'your-account/rex-greeting'`. Keep `main`, `init` and `config`
+fields with `'your-account/rex-greeting'`. Keep `main`, `lazy`, `init`, `config` and `events`
 unchanged. The account name is a placeholder for your real repository.
 
 ```lua
 -- Source fields in the same spec; retain the callbacks from step 2.
 'your-account/rex-greeting',
 main = 'greeting',
-    lazy = true,
+lazy = true,
 ```
 
 Run `rexpack install rex-greeting`, then `rex config reload`. To develop the
@@ -412,8 +450,21 @@ the table from `init.lua`. If you use these commands, create
 
 ```lua
 return {
-    spec = "plugins",
-    dev = { path = "dev" },
+    -- Defaults respect XDG_CONFIG_HOME and XDG_DATA_HOME.
+    base = (os.getenv('XDG_CONFIG_HOME') or (os.getenv('HOME') .. '/.config')) .. '/rex',
+    root = (os.getenv('XDG_DATA_HOME') or (os.getenv('HOME') .. '/.local/share')) .. '/rex/rexpack',
+    spec = 'plugins',
+    lockfile = 'rexpack-lock.json',
+    dev = {path = 'dev'}, -- prefer <base>/dev/<plugin-name> when present
+    build_timeout = 300, -- seconds, for external build commands
+    events = {
+        enabled = true,
+        startup_attempts = 10, -- integer from 1 to 60
+        -- Optional overrides; omit to use automatic discovery/defaults.
+        -- rex_bin = '/absolute/path/to/rex',
+        -- server = 'unix:///absolute/path/to/rex.sock',
+        -- log = '/absolute/path/to/events.log',
+    },
 }
 ```
 
