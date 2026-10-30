@@ -1,6 +1,6 @@
 # rexpack
 
-A small, lazy-loading Lua plugin manager for [Rex](https://www.superlogical.com/rex).
+A small Lua plugin manager with optional lazy loading for [Rex](https://www.superlogical.com/rex).
 Requires Rex with `rex.exec`, Lua 5.1 package loaders and custom actions, Git, and
 POSIX utilities (`sh`, `find`, `test`, `mkdir`, `rmdir`, `pwd`, `rm`). No separate
 Lua interpreter is needed in production. macOS is integration-tested; the same
@@ -15,32 +15,33 @@ git clone https://github.com/tenfyzhong/rexpack.git ~/.config/rex/rexpack
 Add to Rex's `init.lua`:
 
 ```lua
-require('rexpack').setup(require('rexpack_config'))
+require("rexpack").setup({
+    spec = "plugins",
+    dev = { path = "dev" },
+})
 ```
 
-Create `~/.config/rex/rexpack_config.lua`:
+Pass the configuration table directly to `setup()`; no additional configuration
+module is needed. Relative paths resolve against the Rex configuration directory,
+so this example uses `~/.config/rex/plugins` and `~/.config/rex/dev` by default.
 
-```lua
-return {
-    spec = 'plugins',
-    dev = {path = '~/dev', patterns = {}, fallback = false},
-}
-```
-
-Create the `plugins` directory beside this file. Each `.lua` file returns one
+Create the `plugins` directory beside `init.lua`. Each `.lua` file returns one
 plugin specification. Files are discovered recursively and sorted by path.
 Keep their top levels declarative: both the CLI and Rex evaluate these files.
 CLI operations never invoke their `init` or `config` callbacks.
 
-Run `~/.config/rex/rexpack/bin/rexpack install`, then `rex config reload`.
+Existing dev plugins load directly. For remote plugins, install them with the
+CLI before reloading Rex; see [Commands and storage](#commands-and-storage)
+for the CLI's configuration-file requirement. Run `rex config reload` after
+changing plugin configuration.
 Add the **bin directory** to PATH for the shorter `rexpack` command (do not
 symlink the executable alone). The wrapper uses `REX_BIN`, then PATH, then known
 macOS installation locations. It requires a running local Rex service and does
 not start it automatically.
 
-XDG_CONFIG_HOME is respected. CLI `--config PATH` selects another shared config.
+XDG_CONFIG_HOME is respected. CLI `--config PATH` selects its options file.
 For a Rex configuration outside its default directory, set `base` explicitly in
-the shared options to its absolute directory. Relative spec, local plugin and
+the `setup()` options to its absolute directory. Relative spec, local plugin and
 lockfile paths are resolved against that base. The CLI derives base from its
 selected config file. Use absolute paths when sharing options across locations.
 
@@ -51,6 +52,7 @@ selected config file. Use absolute paths when sharing options across locations.
 return {
     'someone/rex-example',
     main = 'example',
+    lazy = true,
     build = 'make install',
     init = function()
         rex.action {
@@ -74,10 +76,10 @@ sources, or `dir = '~/src/repository', name = 'repository'` for local plugins.
 Modules use standard `?.lua` and `?/init.lua` paths in the repository root or
 its `lua/` directory. Plugin names contain letters, digits, underscores or hyphens.
 
-`lazy` defaults to true. `init(plugin)` registers lightweight native declarations
-at startup; the first `require` loads dependencies, the implementation and
-`config(plugin)`. `config` runs once. Failed initialization is not automatically
-retried. Use `lazy = false` for declarations that must execute at startup.
+`lazy` defaults to false: plugins and their dependencies load at startup after
+all `init(plugin)` callbacks register their native declarations. Set `lazy = true`
+to defer the implementation and `config(plugin)` until the first `require`.
+`config` runs once. Failed initialization is not automatically retried.
 `require('rexpack').load(name)` loads explicitly. A root entry script can be
 executed with `dofile(plugin.dir .. '/init.lua')` inside `config`, provided the
 plugin also has its declared main module.
@@ -138,10 +140,10 @@ The runner does not eagerly load `lazy = false` plugins: require the modules
 needed by event registrations explicitly. Do not depend on variables initialized
 by `init`. Native event names, context and payloads pass through unchanged.
 
-Optional shared configuration:
+Optional event settings in the same `setup()` call:
 
 ```lua
-return {
+require("rexpack").setup({
     spec = 'plugins',
     events = {
         enabled = true,       -- false disables all event plugins
@@ -150,7 +152,7 @@ return {
         -- server = 'unix:///absolute/path/to/rex.sock',
         -- log = '/absolute/path/to/events.log',
     },
-}
+})
 ```
 
 The executable resolves through `events.rex_bin`, `REX_BIN`, PATH, then known
@@ -240,6 +242,7 @@ return {
     name = 'rex-greeting',
     dir = '~/dev/rex-greeting',
     main = 'greeting',
+    lazy = true,
     init = function()
         rex.action {
             name = 'greeting_hello',
@@ -320,11 +323,13 @@ unchanged. The account name is a placeholder for your real repository.
 -- Source fields in the same spec; retain the callbacks from step 2.
 'your-account/rex-greeting',
 main = 'greeting',
+    lazy = true,
 ```
 
 Run `rexpack install rex-greeting`, then `rex config reload`. To develop the
 published plugin from `~/dev/rex-greeting`, set `dev.path = '~/dev'` in the
-shared rexpack configuration and add `dev = true` to this remote spec. Omit
+`setup()` options. Rexpack automatically prefers that directory when
+it exists and otherwise uses the installed plugin. Omit
 `dir` when using dev mode: an explicit `dir` always wins. Local/dev plugins are
 not updated or restored by rexpack.
 
@@ -395,13 +400,29 @@ rexpack show NAME
 rexpack profile
 ```
 
+The current CLI's management commands read an options file; they do not extract
+the table from `init.lua`. If you use these commands, create
+`~/.config/rex/rexpack_config.lua` (or pass another file with `--config PATH`):
+
+```lua
+return {
+    spec = "plugins",
+    dev = { path = "dev" },
+}
+```
+
+Keep its options consistent with the inline `setup()` table. This file is only
+needed for CLI management; Rex itself does not need to `require` it. For example,
+run `rexpack install`, then `rex config reload`. `rexpack profile` queries the
+running Rex configuration and does not require this file.
+
 All commands accept `--json` and `--config PATH`. Text output is a concise
 summary; JSON includes detailed paths, locks, build output and timing.
 `profile` always queries the running Rex configuration, not the config selected
 on disk. It does not load plugins to obtain measurements.
 
 Default storage is `$XDG_DATA_HOME/rex/rexpack` or `~/.local/share/rex/rexpack`,
-overridable with `root`. The shared config directory holds `rexpack-lock.json`
+overridable with `root`. The configuration base directory holds `rexpack-lock.json`
 and `rexpack-lock.json.state`; `lockfile` overrides the former. Commit the lock
 file, not the operation-state file. Locks record URL and commit and are replaced
 atomically after successful builds. A report can include successes and failures;
@@ -416,9 +437,11 @@ folders are reported rather than silently reused. Never share different roots
 with the same lock file. Reload Rex explicitly after updates; loaded Lua modules
 are not hot-swapped.
 
-For development, set `dev.path` and use `dev = true` on a plugin. `dev.patterns`
-contains Lua patterns matching the source shorthand or name. `dev = false`
-disables matching. Missing dev directories fail unless `fallback = true`.
+Rexpack first checks `<dev.path>/<plugin-name>` (default `~/dev/<plugin-name>`),
+then falls back to the installation directory if the dev directory is missing.
+No `dev = true` or pattern match is required. An explicit `dir` takes precedence;
+`dev = false` explicitly skips the dev lookup. The legacy `dev.patterns` and
+`dev.fallback` options no longer affect resolution.
 Local/dev paths are never cloned, updated, restored or included in Git locks.
 
 ## Profiling and tests

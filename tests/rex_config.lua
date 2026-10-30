@@ -1,6 +1,6 @@
 local root = assert(os.getenv('REXPACK_ROOT'), 'Set REXPACK_ROOT to the checkout')
 local manager = dofile(root .. '/init.lua')
-local instance = manager.setup({spec = {{name = 'sample', dir = root .. '/tests/fixtures',
+local instance = manager.setup({spec = {{name = 'sample', lazy = true, dir = root .. '/tests/fixtures',
     config = function() _G.rexpack_fixture_configured = true end,
     init = function()
         rex.action {name = 'rexpack_fixture', title = 'Rexpack fixture', run = function()

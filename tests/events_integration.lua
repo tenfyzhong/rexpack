@@ -68,7 +68,7 @@ function TestEventsLive:process_exists(pid)
     return result and result.ok
 end
 function TestEventsLive:testMultiplePluginsShareRunnerAndRegistrationFailure()
-    write(self.tmp .. '/plugins/second.lua', 'return {name="second", dir=' ..
+    write(self.tmp .. '/plugins/second.lua', 'return {name="second", lazy=true, dir=' ..
         string.format('%q', self.tmp .. '/modules') .. ', events=function() rex.on("session_created", function() ' ..
         'local f=assert(io.open(' .. string.format('%q', self.tmp .. '/second.txt') ..
         ', "a")); f:write("second"); f:close() end) end}')
@@ -82,7 +82,7 @@ function TestEventsLive:testMultiplePluginsShareRunnerAndRegistrationFailure()
     wait_for(function() return read(self.marker) == 'event\n' and
         read(self.tmp .. '/second.txt') == 'second' end, 'both plugins did not receive event')
     lu.assertEquals(self:status().pid, current.pid)
-    write(self.tmp .. '/plugins/second.lua', 'return {name="second", dir=' ..
+    write(self.tmp .. '/plugins/second.lua', 'return {name="second", lazy=true, dir=' ..
         string.format('%q', self.tmp .. '/modules') .. ', events=function() error("registration failed") end}')
     self:command('config', 'reload')
     local failed = wait_for(function()

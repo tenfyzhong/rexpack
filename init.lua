@@ -53,19 +53,11 @@ function M.inspect(options)
                     other.main:sub(1, #plugin.main + 1) ~= plugin.main .. '.', 'module conflict')
             end
             local dev = options.dev or {}
-            local use_dev = spec.dev == true
-            if spec.dev == nil then
-                for _, pattern in ipairs(dev.patterns or {}) do
-                    if (spec[1] or name):match(pattern) then use_dev = true end
-                end
-            end
-            if not spec.dir and use_dev then
+            if not spec.dir and spec.dev ~= false then
                 local directory = path((dev.path or '~/dev') .. '/' .. name, base)
                 local r = rex.exec({'test', '-d', directory})
                 if r and r.ok then
                     plugin.dir, plugin.source = directory, 'dev'
-                else
-                    assert(dev.fallback, 'missing dev directory: ' .. directory)
                 end
             end
             self.plugins[name] = plugin
@@ -128,7 +120,7 @@ function M.setup(options)
         p.init_elapsed = os.clock() - before
     end
     for _, p in ipairs(self.order) do
-        if p.spec.lazy == false then self:load(p.name, 'startup') end
+        if p.spec.lazy ~= true then self:load(p.name, 'startup') end
     end
     M.instance = self
     self.setup_elapsed = os.clock() - started
