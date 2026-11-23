@@ -491,12 +491,15 @@ any failed operation produces a nonzero exit. Independent plugins continue.
 
 Operations are serial and mutually exclusive per root. Git commands time out
 after 120 seconds. Clone uses a temporary directory and a management marker.
-Existing unmanaged repositories, source mismatches and dirty checkouts are
-rejected. After a process is killed, inspect for running operations before
-manually removing the empty `.rexpack-operation` directory; unfinished clone
-folders are reported rather than silently reused. Never share different roots
-with the same lock file. Reload Rex explicitly after updates; loaded Lua modules
-are not hot-swapped.
+Rexpack verifies the configured origin URL and honors Git's `url.*.insteadOf`
+rules when contacting the remote. Existing unmanaged repositories, source
+mismatches and dirty checkouts are rejected. If an install left a managed
+checkout without a lock entry, run `rexpack install` again to finish version
+selection and build. After a process is killed, inspect for running operations
+before manually removing the empty `.rexpack-operation` directory. Rexpack
+reports unfinished clone folders and leaves them in place. Never share
+different roots with the same lock file. Reload Rex explicitly after updates
+to load the updated modules.
 
 Rexpack first checks `<dev.path>/<plugin-name>` (default `~/dev/<plugin-name>`),
 then falls back to the installation directory if the dev directory is missing.
@@ -516,24 +519,27 @@ background. Profiles describe the configuration VM, not the separate event
 runner. Disk checkout state and live module state are separate.
 
 ```sh
-make test-deps                   # install LuaUnit 3.5-1 through LuaRocks
+make test-deps                   # install test dependencies through LuaRocks
 make test                        # development-only LuaJIT (or LUA=lua5.1)
+make test-install                # CLI and Git in an isolated installation directory
 make integration REX=/path/to/rex # running Rex, isolated temporary repositories
 make acceptance REX=/path/to/rex  # config check and native action fixture
 make benchmark REX=/path/to/rex   # synthetic 100-module startup comparison
 ```
 
-LuaUnit is a test-only dependency installed through LuaRocks into the ignored
-`.test-deps` directory; no framework source is vendored. Install LuaRocks and a
-Lua 5.1-compatible interpreter before running `make test-deps`. If LuaRocks needs
+LuaUnit and dkjson are test-only dependencies installed through LuaRocks into
+the ignored `.test-deps` directory. Install LuaRocks and a Lua 5.1-compatible
+interpreter before running `make test-deps`. If LuaRocks needs
 an explicit interpreter prefix (for example, Homebrew LuaJIT on macOS), use
 `make test-deps LUAROCKS_FLAGS="--lua-dir=$(brew --prefix luajit)"`.
 The dependency tree uses Lua 5.1 paths for both LuaJIT and Rex's embedded Lua.
 
-The GitHub Actions `Tests` workflow runs `make test-deps` and `make test` on
-Lua 5.1 and LuaJIT for pushes, pull requests, and manual dispatch. It does not
-run the live Rex integration or acceptance targets; run those locally against
-a running Rex service using the commands above.
+The GitHub Actions `Tests` workflow runs `make test-deps`, `make test` and
+`make test-install` on Lua 5.1 and LuaJIT for pushes, pull requests, and manual
+dispatch. The install tests run the CLI and Git against local fixture repositories
+with a test implementation of the Rex APIs. Set `REX_BIN=/path/to/rex` to run
+the same tests with a running Rex service. The live integration and acceptance
+targets also use a running Rex service.
 
 Integration fixtures isolate Git hooks and create
 signed-off commits only in temporary repositories. Acceptance does not modify

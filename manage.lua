@@ -51,7 +51,9 @@ local function verify(p)
     local marker = assert(io.open(p.dir .. '/.git/rexpack-managed'), 'unmanaged plugin directory')
     marker:close()
     assert(git(p, 'rev-parse', '--show-toplevel') == command({'pwd', '-P'}, p.dir), 'not a plugin repository')
-    assert(git(p, 'remote', 'get-url', 'origin') == p.url, 'repository source mismatch')
+    -- Git applies insteadOf rules to transport URLs. Verify the configured origin.
+    assert(git(p, 'config', '--null', '--get-all', 'remote.origin.url') == p.url .. '\0',
+        'repository source mismatch')
     assert(git(p, 'status', '--porcelain') == '', 'dirty plugin: ' .. p.name)
 end
 function M.list(instance)
@@ -109,6 +111,7 @@ function M.run(instance, operation, name)
                 assert(p.url, 'missing Git URL')
                 local installed = exists(p.dir)
                 local lock = locks[p.name]
+                local needs_install = not installed or (operation == 'install' and not lock)
                 if lock then assert(lock.url == p.url, 'lock source mismatch') end
                 if operation == 'restore' then assert(lock, 'no locked version') end
                 if not installed then
@@ -125,7 +128,7 @@ function M.run(instance, operation, name)
                 end
                 verify(p)
                 p.old_commit = installed and git(p, 'rev-parse', 'HEAD') or nil
-                if operation ~= 'build' and (operation ~= 'install' or not installed) then
+                if operation ~= 'build' and (operation ~= 'install' or needs_install) then
                     if installed then git(p, 'fetch', '--tags', 'origin') end
                     local target
                     if operation == 'restore' or (operation == 'install' and lock) then
@@ -144,7 +147,7 @@ function M.run(instance, operation, name)
                     git(p, 'checkout', '--detach', resolved)
                 end
                 p.commit = git(p, 'rev-parse', 'HEAD')
-                if operation == 'build' or not installed or p.old_commit ~= p.commit or pending then
+                if operation == 'build' or needs_install or p.old_commit ~= p.commit or pending then
                     M.build(p, operation, options)
                 end
                 locks[p.name] = {url = p.url, commit = p.commit}
