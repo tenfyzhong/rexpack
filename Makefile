@@ -3,16 +3,21 @@ REX ?= rex
 LUAROCKS ?= luarocks
 LUAROCKS_FLAGS ?=
 LUAUNIT_VERSION := 3.5-1
+DKJSON_VERSION := 2.8-1
 
-.PHONY: test-deps test integration acceptance benchmark
+.PHONY: test-deps test test-install integration acceptance benchmark
 
 test-deps:
 	$(LUAROCKS) --lua-version=5.1 $(LUAROCKS_FLAGS) --tree .test-deps install luaunit $(LUAUNIT_VERSION)
+	$(LUAROCKS) --lua-version=5.1 $(LUAROCKS_FLAGS) --tree .test-deps install dkjson $(DKJSON_VERSION)
 
 test:
 	$(LUA) tests/runtime.lua
 	$(LUA) tests/build.lua
 	$(LUA) tests/events.lua
+
+test-install:
+	REXPACK_TEST_LUA="$(LUA)" $(LUA) tests/install.lua
 
 integration:
 	REX_BIN="$(REX)" "$(REX)" --autostart=false do tests/integration.lua

@@ -31,3 +31,5 @@ jobs:
         run: make test-deps
       - name: Run unit tests
         run: make test LUA=${{ matrix.lua }}
+      - name: Verify clean plugin installation
+        run: make test-install LUA=${{ matrix.lua }}
